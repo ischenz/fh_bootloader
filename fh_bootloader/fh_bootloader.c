@@ -2,7 +2,7 @@
  * @Author: ischen.x ischen.x@foxmail.com
  * @Date: 2026-04-17 10:21:07
  * @LastEditors: ischen.x ischen.x@foxmail.com
- * @LastEditTime: 2026-04-17 15:43:02
+ * @LastEditTime: 2026-04-17 18:18:52
  * 
  * Copyright (c) 2026 by fhchengz, All Rights Reserved. 
  */
@@ -26,7 +26,6 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
         }
         HAL_UART_Receive_IT(&huart3, &rxbuf_u3, 1);
     }
-    
 }
 
 int fh_bl_update_check()
@@ -39,6 +38,7 @@ static int fh_bl_ack(uint32_t pack_id)
     int ret = 0;
     uint8_t ack_buf[sizeof(fh_stream_frame_t) + 256];
     ret = fh_stream_pack(ack_buf, FH_STREAM_TAG_ACK, &pack_id, 4);
+    HAL_UART_Transmit(&huart3, ack_buf, ret, 100);
     return ret;
 }
 
@@ -59,9 +59,9 @@ int stm32_flash_write(uint32_t addr, uint8_t *data, uint16_t len)
 int fh_bl_flash_write(uint8_t *data, uint16_t len)
 {
     uint32_t id = *(uint32_t *)data;
-    uint8_t write_buff[1024] = {0}; // 写入缓冲区
-    uint16_t write_ptr = 0; // 写入缓冲区指针
-    uint32_t flash_write_ptr = FH_BL_APP_ADDR; // FLASH写入指针，初始为APP地址
+    static uint8_t write_buff[1024] = {0}; // 写入缓冲区
+    static uint16_t write_ptr = 0; // 写入缓冲区指针
+    static uint32_t flash_write_ptr = FH_BL_APP_ADDR; // FLASH写入指针，初始为APP地址
     if (len < 4) {
         return -1; // 数据长度不足4字节，无法解析id
     }
@@ -91,7 +91,6 @@ int fh_bl_clear_app(void)
     FLASH_EraseInitTypeDef FlashEraseInit;
     HAL_StatusTypeDef FlashStatus = HAL_OK;
     uint32_t SectorError = 0;
-    uint32_t addrx = 0;
     HAL_FLASH_Unlock();            //解锁
     FlashEraseInit.TypeErase = FLASH_TYPEERASE_SECTORS;     //擦除类型，扇区擦除
     FlashEraseInit.Sector = FLASH_SECTOR_5; //要擦除的扇区
@@ -120,7 +119,13 @@ int fh_bl_update()
         uint8_t buf;
         if (Read_RingBuff(&Uart3_RingBuff, &buf) == RINGBUFF_OK) {
             if (fh_stream_unpack(buf, freame) == FH_STREAM_EVENT_FRAME_RECEIVED) {
-                fh_bl_flash_write(freame->value, freame->length);
+                if (freame->tag == FH_STREAM_TAG_DATA) {
+                    fh_bl_flash_write(freame->value, freame->length);
+                } else if (freame->tag == FH_STREAM_TAG_CMD) {
+                    // 接收结束，跳转到APP
+                    fh_bl_ack(pack_id);
+                    break;
+                }
             }
         }
     }
@@ -132,6 +137,8 @@ void fh_bl_jmp_to_app(int app_addr)
 {
     typedef void (*app_fun_t)(void);
     app_fun_t app_fun = (app_fun_t)(app_addr + 4);
+    HAL_NVIC_DisableIRQ(USART1_IRQn);
+    HAL_NVIC_DisableIRQ(USART3_IRQn);
     __disable_irq();
     // Set the MSP to the value at the start of the application
     __set_MSP(*(uint32_t*)app_addr);

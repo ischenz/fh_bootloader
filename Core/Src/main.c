@@ -90,6 +90,7 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART3_UART_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
   RingBuff_Init(&Uart3_RingBuff);
   HAL_UART_Receive_IT(&huart3, &rxbuf_u3, 1);
@@ -97,6 +98,7 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  HAL_UART_Transmit(&huart1, (uint8_t *)"bootloader\r\n", 13, 100);
   fh_bl_boot();
   while (1)
   {
