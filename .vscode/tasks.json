@@ -1,0 +1,19 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "flash",
+            "type": "process",
+            "command": "openocd",
+            "args": [
+                "-f",
+                "stm32f407_daplink.cfg",
+                "-c",
+                "program C:/AnalogTek/code/stm32f407zg_fh_boot/build/Debug/stm32f407zg_fh_boot.elf verify reset exit"
+            ],
+            "problemMatcher": []
+        }
+    ]
+}
