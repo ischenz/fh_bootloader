@@ -6,9 +6,10 @@
  * 
  * Copyright (c) 2026 by fhchengz, All Rights Reserved. 
  */
-#include "fh_bootloader.h"
 
-int set_upgrade_flag(int flag)
+#include "fh_bootloader_app.h"
+
+int set_upgrade_flag(void)
 {
     fh_bl_info_t info;
     fh_bl_info_read(&info);
