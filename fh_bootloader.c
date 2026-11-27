@@ -2,7 +2,7 @@
  * @Author: ischen.x ischen.x@foxmail.com
  * @Date: 2026-04-17 10:21:07
  * @LastEditors: ischen.x ischen.x@foxmail.com
- * @LastEditTime: 2026-08-21 18:05:12
+ * @LastEditTime: 2026-11-27 10:39:47
  * 
  * Copyright (c) 2026 by fhchengz, All Rights Reserved. 
  */
@@ -136,7 +136,7 @@ static int fh_bl_flash_write(uint8_t *data, uint16_t len)
 {
     memcpy(write_buff + write_ptr, data, len); // 
     write_ptr += len;
-    if (write_ptr >= 3072) { // 接收到大于512字节的数据，写入flash
+    if (write_ptr >= 3072) { // 接收到大于3072字节的数据，写入flash
         // 取4字节的整数倍长度写入flash，并更新写入指针和缓冲区指针
         uint16_t write_len = (write_ptr / 4) * 4; // 取4字节的整数倍长度，舍去不足4字节的部分，留在缓冲区里等待下次写入时补齐到4字节再写入flash
         if (stm32_flash_write(flash_write_ptr, write_buff, write_len) != 0) {
@@ -218,38 +218,40 @@ static int fh_bl_update(size_t *app_size)
     pack_id_idx = 0;                        //重置数据包ID
     for (;;) {
         uint8_t buf;
-        if (Read_RingBuff(&Uart2_RingBuff, &buf) == RINGBUFF_OK) {
-            if (fh_stream_unpack(buf, freame) == FH_STREAM_EVENT_FRAME_RECEIVED) {
-                fh_bl_firmware_packet_t *packet = (fh_bl_firmware_packet_t *)freame->value; // 把帧数据强制转换为固件数据包结构体指针，方便访问数据包ID和内容
-                switch (freame->tag) {
-                    case FH_STREAM_TAG_DATA: // id在这里判断
-                        if (packet->pack_id != pack_id_idx || freame->length < sizeof(fh_bl_firmware_packet_t)) { // id不对，丢弃数据，
-                            FH_BL_PRINT("packet id mismatch, expected %lu but got %lu\r\n", pack_id_idx, packet->pack_id);
-                            continue;
-                        }
-                        fh_bl_flash_write(packet->data, freame->length - sizeof(packet->pack_id)); // 写入数据到flash，去掉数据包ID的长度
-                        fh_bl_ack(pack_id_idx); // 发送ACK
-                        pack_id_idx++; // 数据包ID加1
-                        break;
-                    case FH_STREAM_TAG_CMD: // 接收结束，校验crc跳转到APP
-                        fh_bl_flash_write_final(app_size); // 写入最后剩下的数据到flash
-                        if (fh_bl_crc_check(FH_BL_APP_ADDR, *app_size, *(uint32_t *)freame->value) == 0) { // 校验APP的CRC
-                            fh_bl_ack(0); // 发送升级成功ACK
-                            return 0; // 升级成功
-                        } else { // 校验失败，清除APP区域FLASH数据，重置写入指针，继续等待数据
-                            FH_BL_PRINT("app crc check failed\r\n"); 
-                            fh_bl_clear_app();
-                            fh_bl_ack(1); // 发送升级成功ACK
-                            flash_write_ptr = FH_BL_APP_ADDR; //重置FLASH写入指针
-                            write_ptr = 0;           //重置写入缓冲区指针
-                            pack_id_idx = 0;             //重置数据包ID
-                            return -1; 
-                        }
-                        break;
-                    default:
-                        break;
+        if (Read_RingBuff(&Uart2_RingBuff, &buf) == RINGBUFF_ERR) {
+            continue;
+        }
+        if (fh_stream_unpack(buf, freame) != FH_STREAM_EVENT_FRAME_RECEIVED) {
+            continue;
+        }
+        fh_bl_firmware_packet_t *packet = (fh_bl_firmware_packet_t *)freame->value; // 把帧数据强制转换为固件数据包结构体指针，方便访问数据包ID和内容
+        switch (freame->tag) {
+            case FH_STREAM_TAG_DATA: // id在这里判断
+                if (packet->pack_id != pack_id_idx || freame->length < sizeof(fh_bl_firmware_packet_t)) { // id不对，丢弃数据，
+                    FH_BL_PRINT("packet id mismatch, expected %lu but got %lu\r\n", pack_id_idx, packet->pack_id); //TODO: 这里可以考虑发送一个错误ACK，告诉上位机丢弃这个包，重新发送
+                    continue;
                 }
-            }
+                fh_bl_flash_write(packet->data, freame->length - sizeof(packet->pack_id)); // 写入数据到flash，去掉数据包ID的长度
+                fh_bl_ack(pack_id_idx); // 发送ACK
+                pack_id_idx++; // 数据包ID加1
+                break;
+            case FH_STREAM_TAG_CMD: // 接收结束，校验crc跳转到APP
+                fh_bl_flash_write_final(app_size); // 写入最后剩下的数据到flash
+                if (fh_bl_crc_check(FH_BL_APP_ADDR, *app_size, *(uint32_t *)freame->value) == 0) { // 校验APP的CRC
+                    fh_bl_ack(0); // 发送升级成功ACK
+                    return 0; // 升级成功
+                } else { // 校验失败，清除APP区域FLASH数据，重置写入指针，继续等待数据
+                    FH_BL_PRINT("app crc check failed\r\n"); 
+                    fh_bl_clear_app();
+                    fh_bl_ack(1); 
+                    flash_write_ptr = FH_BL_APP_ADDR; //重置FLASH写入指针
+                    write_ptr = 0;           //重置写入缓冲区指针
+                    pack_id_idx = 0;             //重置数据包ID
+                    return -1; 
+                }
+                break;
+            default:
+                break;
         }
     }
     return 0;
