@@ -10,6 +10,7 @@
 #define __FH_BOOTLOADER_H__
 
 #include <stdint.h>
+#include <stddef.h>
 
 #define FH_BL_VERSION 0x00010000 // 版本号1.0.0，格式为0x00MMmmpp，MM主版本号，mm次版本号，pp补丁版本号
 #define FH_BL_INFO_MAGIC (0x5A5A5A5A)
@@ -23,6 +24,7 @@ typedef enum { // 开机 或者升级
     FH_BL_UPGRADE_TYPE_NONE = 0, // 正常启动
     FH_BL_UPGRADE_TYPE_KEY,      // 按键触发升级
     FH_BL_UPGRADE_TYPE_FLAG,     // 升级标志触发升级
+    FH_BL_UPGRADE_TYPE_SD,       // SD卡固件文件触发升级
 } fh_bl_upgrade_type_e;
 
 typedef struct
@@ -52,5 +54,18 @@ typedef struct
 void fh_bl_boot(void);
 int fh_bl_info_read(fh_bl_info_t *info);
 int fh_bl_info_write(fh_bl_info_t *info);
+
+// 用户自定义升级检测回调: 返回非FH_BL_UPGRADE_TYPE_NONE表示进入对应升级流程
+typedef fh_bl_upgrade_type_e (*fh_bl_upgrade_check_cb_t)(fh_bl_info_t *info);
+// 用户自定义升级执行回调: 数据源由回调自己负责(如SD卡), 返回0表示升级成功
+typedef int (*fh_bl_upgrade_exec_cb_t)(size_t *app_size);
+
+// 注册自定义升级源, 传NULL表示不注册; 未注册时SD类型会回退到默认UART升级
+void fh_bl_register_upgrade(fh_bl_upgrade_check_cb_t check_cb, fh_bl_upgrade_exec_cb_t exec_cb);
+
+// 固件写入流水线, 供外部升级源(如SD卡)复用: 内部缓冲并按4字节对齐写Flash
+int fh_bl_firmware_write(uint8_t *data, uint16_t len);
+int fh_bl_firmware_finish(size_t *app_size); // 写入剩余数据并计算APP大小
+int fh_bl_clear_app(void);                   // 擦除APP区域FLASH
 
 #endif /* __FH_BOOTLOADER_H__ */

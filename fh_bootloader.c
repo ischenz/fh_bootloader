@@ -33,6 +33,15 @@ int fh_key_get_state(void)
     return 0;
 }
 
+static fh_bl_upgrade_check_cb_t upgrade_check_cb = NULL; // 用户自定义升级检测回调
+static fh_bl_upgrade_exec_cb_t  upgrade_exec_cb  = NULL; // 用户自定义升级执行回调
+
+void fh_bl_register_upgrade(fh_bl_upgrade_check_cb_t check_cb, fh_bl_upgrade_exec_cb_t exec_cb)
+{
+    upgrade_check_cb = check_cb;
+    upgrade_exec_cb = exec_cb;
+}
+
 int fh_bl_info_write(fh_bl_info_t *info)
 {
     info->magic = FH_BL_INFO_MAGIC; // 设置magic
@@ -132,7 +141,7 @@ int stm32_flash_write(uint32_t addr, uint8_t *data, uint16_t len)
 static uint8_t write_buff[4096] = {0}; // 写入缓冲区
 static uint16_t write_ptr = 0;          // 写入缓冲区指针 写入缓冲区已有的数据长度
 static uint32_t flash_write_ptr = FH_BL_APP_ADDR; // FLASH写入指针，初始为APP地址
-static int fh_bl_flash_write(uint8_t *data, uint16_t len)
+int fh_bl_firmware_write(uint8_t *data, uint16_t len)
 {
     memcpy(write_buff + write_ptr, data, len); // 
     write_ptr += len;
@@ -150,8 +159,8 @@ static int fh_bl_flash_write(uint8_t *data, uint16_t len)
     return 0;
 }
 
-// 传输完成后写入最后剩下的数据到flash
-static int fh_bl_flash_write_final(size_t *app_size)
+// 写入最后剩下的数据到flash，并计算APP大小
+int fh_bl_firmware_finish(size_t *app_size)
 {
     int16_t write_len = 0; 
     if (write_ptr > 0) { // 如果缓冲区还有剩余数据，写入flash
@@ -192,9 +201,11 @@ static fh_bl_upgrade_type_e fh_bl_update_check(fh_bl_info_t *info)
     if (fh_key_get_state() == FH_BL_KEY_PRESSED) { // 按住按键开机
         FH_BL_PRINT("key pressed, enter upgrade mode\r\n");
         return FH_BL_UPGRADE_TYPE_KEY; // 进入升级模式
-    } else if (info->upgrade_flag == 1) { 
+    } else if (info->upgrade_flag == 1) {
         FH_BL_PRINT("upgrade flag set, enter upgrade mode\r\n");
         return FH_BL_UPGRADE_TYPE_FLAG; // 进入升级模式
+    } else if (upgrade_check_cb) { // 用户自定义检测(如SD卡固件文件)
+        return upgrade_check_cb(info);
     } else {
         return FH_BL_UPGRADE_TYPE_NONE; // 正常启动
     }
@@ -231,12 +242,12 @@ static int fh_bl_update(size_t *app_size)
                     FH_BL_PRINT("packet id mismatch, expected %lu but got %lu\r\n", pack_id_idx, packet->pack_id); //TODO: 这里可以考虑发送一个错误ACK，告诉上位机丢弃这个包，重新发送
                     continue;
                 }
-                fh_bl_flash_write(packet->data, freame->length - sizeof(packet->pack_id)); // 写入数据到flash，去掉数据包ID的长度
+                fh_bl_firmware_write(packet->data, freame->length - sizeof(packet->pack_id)); // 写入数据到flash，去掉数据包ID的长度
                 fh_bl_ack(pack_id_idx); // 发送ACK
                 pack_id_idx++; // 数据包ID加1
                 break;
             case FH_STREAM_TAG_CMD: // 接收结束，校验crc跳转到APP
-                fh_bl_flash_write_final(app_size); // 写入最后剩下的数据到flash
+                fh_bl_firmware_finish(app_size); // 写入最后剩下的数据到flash
                 if (fh_bl_crc_check(FH_BL_APP_ADDR, *app_size, *(uint32_t *)freame->value) == 0) { // 校验APP的CRC
                     fh_bl_ack(0); // 发送升级成功ACK
                     return 0; // 升级成功
@@ -322,7 +333,13 @@ void fh_bl_boot(void)
     ret = fh_bl_update_check(&bl_info);
     if (ret != FH_BL_UPGRADE_TYPE_NONE) // 需要升级
     {
-        if (fh_bl_update(&app_size) != 0) {
+        int update_ret = 0;
+        if (ret == FH_BL_UPGRADE_TYPE_SD && upgrade_exec_cb) { // SD卡升级走用户自定义回调
+            update_ret = upgrade_exec_cb(&app_size);
+        } else { // 默认UART升级
+            update_ret = fh_bl_update(&app_size);
+        }
+        if (update_ret != 0) {
             // 处理升级失败的情况 软重启
             NVIC_SystemReset();
         }
